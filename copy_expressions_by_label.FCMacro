@@ -1,0 +1,38 @@
+from PySide import QtGui, QtCore
+
+class MyDlg(QtGui.QDialog):
+	""""""
+	def __init__(self):
+		super(MyDlg, self).__init__()
+		self.initUI()
+	def initUI(self):      
+		workButton = QtGui.QPushButton("Copy expressions")
+		workButton.clicked.connect(self.do_work)
+		self.srcLineEdit = QtGui.QLineEdit()
+		self.dstLineEdit = QtGui.QLineEdit()
+		#
+		mainLayout = QtGui.QVBoxLayout()
+		mainLayout.addWidget(workButton)
+		mainLayout.addWidget(QtGui.QLabel("Source"))
+		mainLayout.addWidget(self.srcLineEdit)
+		mainLayout.addWidget(QtGui.QLabel("Destination"))
+		mainLayout.addWidget(self.dstLineEdit)
+		self.setLayout(mainLayout)
+		# define window		xLoc,yLoc,xDim,yDim
+		self.setGeometry(	250, 250, 0, 50)
+		self.setWindowTitle("Copy expressions by label")
+		self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+
+	def do_work(self):
+		doc = App.ActiveDocument
+		src = doc.getObjectsByLabel(self.srcLineEdit.text())[0]
+		dst = doc.getObjectsByLabel(self.dstLineEdit.text())[0]
+		count = 0
+		for ex in src.ExpressionEngine:
+			k,v = ex
+			dst.setExpression(k,v)
+			count = count+1
+		QtGui.QMessageBox.information(None,"",f"{count} expressions copied.")
+		
+form = MyDlg()
+form.exec_()
