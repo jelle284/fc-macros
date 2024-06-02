@@ -31,12 +31,16 @@ class MyButtons(QtGui.QDialog):
 		#find all objects with expressions
 		expr_objs = [ob for ob in doc.Objects if ob.ExpressionEngine]
 		#loop expressions
+		count = 0
 		for obj in expr_objs:
 			print("working on", obj.Label)
 			idxs = []
 			for expr in obj.ExpressionEngine:
 				k, v = expr
-				obj.setExpression(k, v.replace(search_for, replace_with))
+				if v.find(search_for) >= 0:
+					obj.setExpression(k, v.replace(search_for, replace_with))
+					count = count + 1
+		QtGui.QMessageBox.information(None,"",f"{count} occurences replaced.")
 
 form = MyButtons()
 form.exec_()
