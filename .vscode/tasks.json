@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Copy FreeCAD Macros",
+      "type": "shell",
+      "command": "xcopy /Y ${workspaceFolder}\\*.FCMacro ${env:APPDATA}\\FreeCAD\\Macro\\",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
