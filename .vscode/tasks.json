@@ -4,7 +4,7 @@
     {
       "label": "Copy FreeCAD Macros",
       "type": "shell",
-      "command": "xcopy /Y ${workspaceFolder}\\*.FCMacro ${env:APPDATA}\\FreeCAD\\Macro\\",
+      "command": "xcopy /Y ${workspaceFolder}\\*.FCMacro ${env:APPDATA}\\FreeCAD\\Macro\\ && xcopy /Y ${workspaceFolder}\\mvc_gui.py ${env:APPDATA}\\FreeCAD\\Macro\\",
       "options": {
         "shell": {
           "executable": "cmd.exe",
