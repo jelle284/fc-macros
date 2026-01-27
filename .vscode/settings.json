@@ -1,7 +1,10 @@
 {
     "python.defaultInterpreterPath": "C:/Program Files/FreeCAD 1.0/bin/python.exe",
     "python.analysis.extraPaths": [
+        "C:/Program Files/FreeCAD 1.0/in/Lib/site-packages",
+        "C:/Program Files/FreeCAD 1.0/Mod",
         "C:/Program Files/FreeCAD 1.0/Ext",
+        "${workspaceFolder}/scripts",
         "D:/repos/mvc"
     ],
     "files.associations": {

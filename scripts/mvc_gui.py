@@ -2,7 +2,6 @@ import sys
 sys.path.append("D:/repos/mvc")
 from mvc.core import MiniVC, MVCError
 import os
-import subprocess
 import json
 
 from PySide.QtWidgets import (QFileSystemModel, QTreeView,
@@ -117,6 +116,7 @@ class MVCGui(QWidget):
         self.backend_path = cfg["backend_path"]
         self.workspace_path = cfg["workspace_path"]
         self.username = cfg["username"]
+        self._file_extension_callbacks = {}
 
     def initUI(self):
         LINE_WIDTH = QLabel().sizeHint().height()
@@ -137,8 +137,6 @@ class MVCGui(QWidget):
         self.release_button.clicked.connect(self._release)
         self.remove_button = QPushButton("Remove")
         self.remove_button.clicked.connect(self._remove)
-        self.debug_button = QPushButton("Debug")
-        self.debug_button.clicked.connect(self._debug)
 
         # File browser
         browse_button = QPushButton("Browse")
@@ -149,6 +147,8 @@ class MVCGui(QWidget):
         self.deselect_all_button.clicked.connect(self._deselect_all)
         self.model = CheckableFileSystemModel()
         self.model.setRootPath(QDir.rootPath())
+        self.open_button = QPushButton("Open")
+        self.open_button.clicked.connect(self._open_tree)
         self.tree = QTreeView()
         self.tree.setModel(self.model)
         self.tree.setRootIndex(self.model.index(QDir.homePath()))
@@ -200,7 +200,6 @@ class MVCGui(QWidget):
         vbox2.addWidget(self.release_button)
         left_col.addLayout(vbox2)
         left_col.addStretch(3)
-        #left_col.addWidget(self.debug_button)
         
 
         # File column layout
@@ -212,7 +211,7 @@ class MVCGui(QWidget):
         button_layout.addWidget(self.deselect_all_button)
         right_col.addLayout(button_layout)
         right_col.addWidget(self.tree)
-        
+        right_col.addWidget(self.open_button)
         right_col.addWidget(QLabel("Description"))
         right_col.addWidget(self.desc_edit)
         right_col.addWidget(self.submit_button)
@@ -345,6 +344,9 @@ class MVCGui(QWidget):
 
     def _submit(self):
         files = self._get_selected_files()
+        if files == []:
+            self.errLabel.setText("No files to submit.")
+            return
         description = self.desc_edit.text()
         try:
             mvc = MiniVC(self.backend_path, self.workspace_path)
@@ -387,7 +389,6 @@ class MVCGui(QWidget):
             if len(recipe.files_to_remove) > 0:
                 print("removing files", ", ".join(recipe.files_to_remove))
             mvc.review_finalize(recipe)
-            subprocess.Popen(["notepad", os.path.join(self.workspace_path, "changelog.md")])
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
@@ -400,12 +401,33 @@ class MVCGui(QWidget):
 
     def _remove(self):
         files = self._get_selected_files()
+        if files == []:
+            self.errLabel.setText("No files to submit.")
+            return
         try:
             mvc = MiniVC(self.backend_path, self.workspace_path)
             mvc.remove(files)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
-    def _debug(self):
-        files = self._get_selected_files()
-        print("Selected files:", files)
+    def _open_tree(self):
+        selected = self._get_selected_files()
+        num_files = 0
+        for file in selected:
+            file: str
+            filepath = os.path.join(self.workspace_path, file)
+            if os.path.isfile(filepath):
+                try:
+                    self._file_extension_callbacks[file.split(".")[-1]](filepath)
+                except KeyError:
+                    pass
+                num_files += 1
+        if num_files > 0: return
+        if len(selected) == 1:
+            check_dir = os.path.join(self.workspace_path, selected[0])
+            if os.path.isdir(check_dir):
+                self.workspace_path = check_dir
+                return
+
+    def register_file_handler(self, extension: str, handler: callable):
+        self._file_extension_callbacks[extension] = handler

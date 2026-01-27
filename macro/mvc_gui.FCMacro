@@ -5,23 +5,20 @@ import FreeCADGui
 from PySide.QtCore import Qt
 import os
 
-class CustomDockWidget(QDockWidget):
+class MvcDockWidget(QDockWidget):
     def __init__(self):
-        super(CustomDockWidget, self).__init__()
+        super(MvcDockWidget, self).__init__()
         self.setWindowTitle("Mini Version Control")
         appdata_path = FreeCAD.ConfigGet("UserAppData")
         self.mvc_gui = MVCGui(appdata_path)
+        self.mvc_gui.register_file_handler("FCStd", FreeCAD.loadFile)
         self.setWidget(self.mvc_gui)
 
     def closeEvent(self, event):
         # Ensure the timer in MVCGui is stopped when the dock widget is closed
         self.mvc_gui.timer.stop()
-        super(CustomDockWidget, self).closeEvent(event)
-
-def add_custom_dock_widget():
-    dock_widget = CustomDockWidget()
-    FreeCADGui.getMainWindow().addDockWidget(Qt.RightDockWidgetArea, dock_widget)
+        super(MvcDockWidget, self).closeEvent(event)
 
 if __name__ == "__main__":
-    print("mvc gui running from macro")
-    add_custom_dock_widget()
+    dock_widget = MvcDockWidget()
+    FreeCADGui.getMainWindow().addDockWidget(Qt.RightDockWidgetArea, dock_widget)

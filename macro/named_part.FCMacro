@@ -1,0 +1,44 @@
+from PySide import QtGui, QtCore
+import FreeCAD as App
+import FreeCADGui as Gui
+import os
+
+class MyButtons(QtGui.QDialog):
+    """"""
+    def __init__(self):
+        super(MyButtons, self).__init__()
+        self.initUI()
+    def initUI(self):      
+        createButton = QtGui.QPushButton("Create")
+        createButton.clicked.connect(self.create_part)
+        self.nameEdit = QtGui.QLineEdit()
+
+        #
+        mainLayout = QtGui.QVBoxLayout()
+        mainLayout.addWidget(QtGui.QLabel("Enter name for part"))
+        mainLayout.addWidget(self.nameEdit)
+        mainLayout.addWidget(createButton)
+
+        self.setLayout(mainLayout)
+        # define window		xLoc,yLoc,xDim,yDim
+        self.setGeometry(250, 250, 0, 50)
+        self.setWindowTitle("Part document template")
+        self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
+
+    def create_part(self):
+        name = self.nameEdit.text()
+        current_doc = App.activeDocument()
+        new_doc = App.newDocument()
+
+        part = new_doc.addObject('App::Part','Part')
+        part.Label = ''.join(word.capitalize() for word in name.split())
+        body = new_doc.addObject('PartDesign::Body','Body')
+        body.Label = name.lower()
+        part.addObject(body)
+        new_doc.recompute()
+        save_path = os.path.dirname(current_doc.FileName)
+        new_doc.saveAs(os.path.join(save_path, f"{name}.FCStd"))
+        Gui.setActiveDocument(current_doc)
+        
+form = MyButtons()
+form.exec_()
