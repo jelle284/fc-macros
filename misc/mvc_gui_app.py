@@ -16,9 +16,9 @@ class MyDlg(QtGui.QDialog):
 
 	def user_open(self, file):
 		print("Open function for", file)
-		
+
 if __name__ == '__main__':
-    print("mvc gui running from app")
-    app = QtGui.QApplication(sys.argv)
-    form = MyDlg()
-    form.exec_()
+	print("mvc gui running from app")
+	app = QtGui.QApplication(sys.argv)
+	form = MyDlg()
+	form.exec_()
