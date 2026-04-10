@@ -1,39 +1,31 @@
-import sys
-sys.path.append("D:/repos/mvc")
 from mvc.core import MiniVC, MVCError
+from mvc.helpers import JSONBase
 import os
-import json
+from dataclasses import dataclass
 
 from PySide.QtWidgets import (QFileSystemModel, QTreeView,
                               QVBoxLayout, QHBoxLayout, QFormLayout,
                               QLineEdit, QLabel, QPushButton,
                               QFileDialog, QWidget,
-                              QListWidget, QListWidgetItem,
+                              QComboBox, QInputDialog,
                               QDialog, QDialogButtonBox)
-from PySide.QtCore import Qt, QTimer, QDir
+from PySide.QtCore import Qt, QTimer, QDir, QModelIndex
 from PySide.QtGui import QColor
 
-def save_config(appdata_path, cfg):
-    config_file = os.path.join(appdata_path, "mvc_config.json")
-    with open(config_file, 'w') as fd:
-        json.dump(cfg, fd)
-
-def load_config(appdata_path):
-    config_path = os.path.join(appdata_path, "mvc_config.json")
-    try:
-        with open(config_path, 'r') as fd:
-            return json.load(fd)
-    except:
-        return {'backend_path': QDir.homePath() + "/mvc_files",
-                        'username': 'user',
-                        'workspace_path': QDir.homePath()}
+##########################################################################
+#================= User settings, persistent storage ====================#
+@dataclass
+class UserConfig(JSONBase):
+    backend_path: str
+    username: str
+    user_paths: list[str]
     
 class SettingsDialog(QDialog):
-    def __init__(self, backend, user, parent=None):
+    def __init__(self, default: UserConfig, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.backend_edit = QLineEdit(backend)
-        self.user_edit = QLineEdit(user)
+        self.backend_edit = QLineEdit(default.backend_path)
+        self.user_edit = QLineEdit(default.username)
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self._browse_backend)
         form_layout = QFormLayout()
@@ -53,10 +45,12 @@ class SettingsDialog(QDialog):
         if path:
             self.backend_edit.setText(path)
 
+##########################################################################
+#===================== Workspace file browser ===========================#
+
 class CheckableFileSystemModel(QFileSystemModel):
     def _check_file_type(self, index):
         filepath = self.fileName(index)
-        is_dir = self.isDir(index)
         exclude_by_filename = filepath in (
             ".mvc",
             "changelog.md",
@@ -64,7 +58,7 @@ class CheckableFileSystemModel(QFileSystemModel):
         exclude_by_extension = any(filepath.endswith(extension) for extension in (
             ".FCBak",
         ))
-        file_is_forbidden = exclude_by_filename or exclude_by_extension or is_dir
+        file_is_forbidden = exclude_by_filename or exclude_by_extension
         return file_is_forbidden
     
     def __init__(self, parent=None):
@@ -79,44 +73,79 @@ class CheckableFileSystemModel(QFileSystemModel):
             else:
                 return Qt.Unchecked
         if role == Qt.ForegroundRole and index.column() == 0:
-            file_is_forbidden = self._check_file_type(index)
-            if not file_is_forbidden:
+            if not self.isDir(index):
                 filename = os.path.basename(self.filePath(index))
                 if filename in self.changed_files:
                     return QColor("orange")
         return super().data(index, role)
-
+    
     def setData(self, index, value, role=Qt.CheckStateRole):
         if role == Qt.CheckStateRole and index.column() == 0:
-            if value == Qt.Checked:
+            if value == Qt.Checked.value:
                 self.checked_files.add(index)
             else:
                 self.checked_files.discard(index)
             self.dataChanged.emit(index, index, [Qt.CheckStateRole])
             return True
         return super().setData(index, value, role)
-
+    
     def flags(self, index):
-        file_is_forbidden = self._check_file_type(index)
-        if file_is_forbidden:
-            return super().flags(index) & (~Qt.ItemIsEnabled)
+        if self.isDir(index):
+            return super().flags(index) & (~Qt.ItemIsUserCheckable) | (Qt.ItemIsSelectable) 
         return super().flags(index) | Qt.ItemIsUserCheckable
 
     def set_changed_files(self, files):
         self.changed_files = set(files)
-        # Emit layout changed to refresh the view
         self.layoutChanged.emit()
 
+    def index(self, *args):
+        index = super().index(*args)
+        if index.isValid() and self._check_file_type(index):
+            return QModelIndex()
+        return index
+    
+    def open_directory(self, index):
+        if self.isDir(index):
+            return self.filePath(index)
+        return None
+
+##########################################################################
+#====================== Load or create dialog ===========================#
+class LoadOrCreateDialog(QDialog):
+    def __init__(self, mvc: MiniVC, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Load or create project")
+        form_layout = QFormLayout()
+        self.projects_combo = QComboBox()
+        self.projects_combo.addItems([k for k in mvc.list_projects()])
+        form_layout.addWidget(self.projects_combo)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        form_layout.addWidget(button_box)
+        self.setLayout(form_layout)
+
+##########################################################################
+#========================= Main GUI widget ==============================#
+
 class MVCGui(QWidget): 
-    def __init__(self, appdata_path = ""):
+    def __init__(self, appdata_path = None):
         super(MVCGui, self).__init__()
+        if not appdata_path:
+            appdata_path = QDir.homePath()
         self.appdata_path = appdata_path
-        self.initUI()
-        cfg = load_config(appdata_path)
-        self.backend_path = cfg["backend_path"]
-        self.workspace_path = cfg["workspace_path"]
-        self.username = cfg["username"]
+        try:
+            self.user_config = UserConfig.load(self.appdata_path)
+        except Exception as e:
+            self.user_config = UserConfig(
+                backend_path = f"{QDir.rootPath()}mvc-files",
+                username = "user",
+                user_paths = [QDir.rootPath(),]
+            )
+            print(f"Exception in load config {e}, using defaults.")
         self._file_extension_callbacks = {}
+        self.initUI()
+        self._updateGUI()
 
     def initUI(self):
         LINE_WIDTH = QLabel().sizeHint().height()
@@ -155,13 +184,9 @@ class MVCGui(QWidget):
         self.tree.setColumnHidden(1, True)  # Hide the 'Size' column
         self.tree.setColumnHidden(2, True)  # Hide the 'Type' column
         self.tree.setColumnHidden(3, True)  # Hide the 'Date Modified' column
+        self.tree.setMinimumWidth(200)
 
-        # List Box
-        self.projectList = QListWidget()
-        self.projectList.setMaximumHeight(LINE_WIDTH * 5)
-        
         # Text inputs
-        self.create_edit = QLineEdit()
         self.desc_edit = QLineEdit()
         self.desc_edit.setMinimumHeight(LINE_WIDTH * 5)
         self.desc_edit.setAlignment(Qt.AlignTop)
@@ -171,9 +196,13 @@ class MVCGui(QWidget):
         self.infoLabel.setStyleSheet("border: 1px solid black;")
         self.infoLabel.setWordWrap(True)
         self.infoLabel.setMinimumHeight(LINE_WIDTH * 8)
-        self.versionLabel = QLabel()
+        self.infoLabel.setMinimumWidth(200)
+        self.projectLabel = QLabel()
         self.errLabel = QLabel()
-        self.cwdLabel = QLabel()
+
+        # Combo boxes
+        self.workspace_combo = QComboBox()
+        self.workspace_combo.activated.connect(self._workspace_combo_change)
 
         # Left column layout
         left_col = QVBoxLayout()
@@ -182,14 +211,8 @@ class MVCGui(QWidget):
         left_col.addSpacing(LINE_WIDTH)
 
         vbox1 = QVBoxLayout()
-        vbox1.addWidget(QLabel("Project Name"))
-        vbox1.addWidget(self.create_edit)
         vbox1.addWidget(self.create_button)
-        vbox1.addWidget(QLabel("Project List"))
-        vbox1.addWidget(self.projectList)
         vbox1.addWidget(self.load_button)
-        vbox1.addWidget(QLabel("Project Version"))
-        vbox1.addWidget(self.versionLabel)
         left_col.addLayout(vbox1)
         left_col.addStretch(1)
         vbox2 = QVBoxLayout()
@@ -201,11 +224,11 @@ class MVCGui(QWidget):
         left_col.addLayout(vbox2)
         left_col.addStretch(3)
         
-
         # File column layout
         right_col = QVBoxLayout()
         right_col.addWidget(browse_button)
-        right_col.addWidget(self.cwdLabel)
+        right_col.addWidget(self.projectLabel)
+        right_col.addWidget(self.workspace_combo)
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.select_all_button)
         button_layout.addWidget(self.deselect_all_button)
@@ -217,7 +240,6 @@ class MVCGui(QWidget):
         right_col.addWidget(self.submit_button)
         right_col.addWidget(self.remove_button)
         
-
         # Main layout with columns
         mainLayout = QHBoxLayout()
         mainLayout.addLayout(left_col)
@@ -228,77 +250,78 @@ class MVCGui(QWidget):
         self.timer.timeout.connect(self._on_timer_tick)
         self.timer.start(1000)
 
+    def _get_mvc(self):
+        return MiniVC(self.user_config.backend_path, self.user_config.user_paths[0])
+    
+    def _updateGUI(self):
+        current_path = self.user_config.user_paths[0]
+        self.tree.setRootIndex(self.model.index(current_path))
+        self.workspace_combo.clear()
+        for path in self.user_config.user_paths:
+            self.workspace_combo.addItem(path)
+        self.workspace_combo.setCurrentIndex(0)
+        allow_create = True
+        allow_load = True
+        workspace = None
+        try:
+            mvc = self._get_mvc()
+            workspace = mvc._get_workspace()
+            allow_load = False
+            project, _= mvc._get_project(workspace.project)
+            allow_create = False
+            self.projectLabel.setText(f"{project.name} {project.id}")
+            self.errLabel.setText("")
+        except MVCError as err:
+            self.errLabel.setText(f"{err}")
+            self.projectLabel.setText("")
+            if workspace:
+                self.projectLabel.setText(workspace.project)
+        self.create_button.setEnabled(allow_create)
+        self.load_button.setEnabled(allow_load)
+
+    def _set_user_path(self, path):
+        try:
+            self.user_config.user_paths.remove(path)
+        except ValueError:
+            pass
+        self.user_config.user_paths.insert(0, path)
+        while len(self.user_config.user_paths) > 5:
+            self.user_config.user_paths.pop()
+        self.user_config.save(self.appdata_path)
+
     def _on_timer_tick(self):
-        versionText = ""
-        errorText = self.errLabel.text()
         infoText = ""
         changed_files = []
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
-            workspace = mvc._get_workspace()
-            if workspace:
-                status = mvc.status()
-                if status:
-                    infoText = "\n".join(status)
-                changed_files = mvc.changes()
-            projects = mvc.list_projects()
-            if len(projects) != self.projectList.count():
-                self.projectList.clear()
-                self.projectList.addItems([f"{name}" for name in projects])
-            for item in self.projectList.selectedItems():
-                if item.text() in projects:
-                    versionText = projects[item.text()]
-            project_name = self.create_edit.text()
-            if project_name in projects:
-                versionText = projects[project_name]
-        except MVCError as e:
-            errorText = f"{e}"
-        
-        self.errLabel.setText(errorText)
-        self.versionLabel.setText(versionText)
+            mvc = self._get_mvc()
+            status = mvc.status()
+            if status:
+                if len(status) > 10:
+                    status = status[:10]
+                infoText = "\n".join(status)
+            changed_files = mvc.changes()
+        except MVCError:
+            pass
         self.infoLabel.setText(infoText)
         self.model.set_changed_files(changed_files)
 
-    @property
-    def workspace_path(self):
-        root_index = self.tree.rootIndex()
-        return self.model.filePath(root_index)
-
-    @workspace_path.setter
-    def workspace_path(self, path):
-        self.tree.setRootIndex(self.model.index(path))
-        cfg = load_config(self.appdata_path)
-        cfg["workspace_path"] = path
-        save_config(self.appdata_path, cfg)
-        self.cwdLabel.setText(path)
-        try:
-            mvc = MiniVC(self.backend_path, path)
-            workspace = mvc._get_workspace()
-            if workspace:
-                self._set_gui_project(workspace.project)
-            else:
-                self._set_gui_project("")
-        except MVCError as err:
-            self.errLabel.setText(f"{err}")
-
-    def _set_gui_project(self, project_name):
-            self.create_edit.setText(project_name)
+    def _workspace_combo_change(self, index):
+        path = self.workspace_combo.itemText(index)
+        self._set_user_path(path)
+        self._updateGUI()
 
     def _settings(self):
-        dlg = SettingsDialog(self.backend_path, self.username, self)
-        if dlg.exec_() == QDialog.Accepted:
-            self.backend_path = dlg.backend_edit.text()
-            self.username = dlg.user_edit.text()
-            save_config(self.appdata_path, 
-                        {"backend_path": self.backend_path,
-                         "username": self.username, 
-                         "workspace_path": self.workspace_path})
+        dlg = SettingsDialog(self.user_config, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.user_config.backend_path = dlg.backend_edit.text()
+            self.user_config.username = dlg.user_edit.text()
+            self.user_config.save(self.appdata_path)
+            self._updateGUI()
 
     def _browse(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Directory", self.workspace_path)
-        if not path:
-            return
-        self.workspace_path = path
+        path = QFileDialog.getExistingDirectory(self, "Select Directory", self.user_config.user_paths[0])
+        self._set_user_path(path)
+        self._updateGUI()
 
     def _select_all(self):
         self._set_all_checked(True)
@@ -329,16 +352,15 @@ class MVCGui(QWidget):
     def _get_selected_files(self):
         selected_files = []
         for index in self.model.checked_files:
-            file_path = os.path.basename(self.model.filePath(index))
-            selected_files.append(file_path)
+            selected_files.append(self.model.fileName(index))
         return selected_files
 
     def _create_proj(self):
-        project_name = self.create_edit.text()
+        project_name, ok = QInputDialog.getText(self, "Create Project", "Enter project name")
+        if not ok: return
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             mvc.create(project_name)
-            self._set_gui_project(project_name)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
@@ -349,7 +371,7 @@ class MVCGui(QWidget):
             return
         description = self.desc_edit.text()
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             mvc.submit(files, description)
             self.desc_edit.clear()
             self._deselect_all()
@@ -359,30 +381,34 @@ class MVCGui(QWidget):
     def _save(self):
         description = self.desc_edit.text()
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             mvc.save(description)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
     def _load(self):
-        project = self.projectList.currentItem()
+        mvc = self._get_mvc()
+        dlg = LoadOrCreateDialog(mvc, self)
+        status = dlg.exec()
+        if not status: return
+        project = dlg.projects_combo.currentText()
         if not project: return
-        print("loading", project.text())
+        print("loading", project)
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
-            recipe = mvc.load(project.text())
+            mvc = self._get_mvc()
+            recipe = mvc.load(project)
             if len(recipe.files_to_add) > 0:
                 print("adding files", ", ".join(recipe.files_to_add))
             if len(recipe.files_to_remove) > 0:
                 print("removing files", ", ".join(recipe.files_to_remove))
             mvc.load_finalize(recipe)
-            self._set_gui_project(project.text())
+            self._set_gui_project(project)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
             
     def _review(self):
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             recipe = mvc.review()
             if len(recipe.files_to_add) > 0:
                 print("adding files", ", ".join(recipe.files_to_add))
@@ -394,7 +420,7 @@ class MVCGui(QWidget):
 
     def _release(self):
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             mvc.release()
         except MVCError as e:
             self.errLabel.setText(f"{e}")
@@ -405,7 +431,7 @@ class MVCGui(QWidget):
             self.errLabel.setText("No files to submit.")
             return
         try:
-            mvc = MiniVC(self.backend_path, self.workspace_path)
+            mvc = self._get_mvc()
             mvc.remove(files)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
@@ -413,21 +439,48 @@ class MVCGui(QWidget):
     def _open_tree(self):
         selected = self._get_selected_files()
         num_files = 0
-        for file in selected:
-            file: str
-            filepath = os.path.join(self.workspace_path, file)
-            if os.path.isfile(filepath):
-                try:
-                    self._file_extension_callbacks[file.split(".")[-1]](filepath)
-                except KeyError:
-                    pass
+        for filepath in selected:
+            filepath: str
+            if os.path.isfile(os.path.join(self.user_config.workspace_path, filepath)):
+                for k in self._file_extension_callbacks:
+                    if filepath.endswith(f".{k}"):
+                        self._file_extension_callbacks[k](filepath)
                 num_files += 1
         if num_files > 0: return
+        selected = self.tree.selectedIndexes()
         if len(selected) == 1:
-            check_dir = os.path.join(self.workspace_path, selected[0])
+            selected = selected[0]
+            check_dir = f"{self.model.filePath(selected)}"
             if os.path.isdir(check_dir):
-                self.workspace_path = check_dir
+                self.user_config.workspace_path = check_dir
+                self._updateGUI()
                 return
 
     def register_file_handler(self, extension: str, handler: callable):
         self._file_extension_callbacks[extension] = handler
+
+
+if __name__ == '__main__':
+    from PySide.QtGui import QApplication
+    import sys
+
+    class AppDlg(QDialog):
+        def __init__(self):
+            super(AppDlg, self).__init__()
+            self.initUI()
+
+        def initUI(self):
+            self.mvc_gui = MVCGui()
+            self.mvc_gui.register_file_handler("FCStd", self.user_open)
+            mainLayout = QVBoxLayout()
+            mainLayout.addWidget(self.mvc_gui)
+            self.setLayout(mainLayout)
+
+        def user_open(self, file):
+            print("Open function for", file)
+
+    if __name__ == '__main__':
+        print("mvc gui running from app")
+        app = QApplication(sys.argv)
+        form = AppDlg()
+        form.exec()

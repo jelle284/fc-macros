@@ -3,7 +3,6 @@ from PySide.QtWidgets import QDockWidget
 import FreeCAD
 import FreeCADGui
 from PySide.QtCore import Qt
-import os
 
 class MvcDockWidget(QDockWidget):
     def __init__(self):
@@ -15,7 +14,6 @@ class MvcDockWidget(QDockWidget):
         self.setWidget(self.mvc_gui)
 
     def closeEvent(self, event):
-        # Ensure the timer in MVCGui is stopped when the dock widget is closed
         self.mvc_gui.timer.stop()
         super(MvcDockWidget, self).closeEvent(event)
 
