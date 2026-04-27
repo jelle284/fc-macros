@@ -53,16 +53,33 @@ class SettingsDialog(QDialog):
 class ConfirmationDialog(QDialog):
     def __init__(self, files: list[str], parent=None):
         super().__init__(parent)
-        LINE_WIDTH = QLabel().sizeHint().height()
         self.setWindowTitle("Confirm action")
         form_layout = QFormLayout()
+        form_layout.addWidget(QLabel("The following files will be overwritten!"))
         fileLabel = QLabel()
         fileLabel.setStyleSheet("border: 1px solid black;")
         fileLabel.setWordWrap(True)
-        fileLabel.setMinimumHeight(LINE_WIDTH * 8)
-        fileLabel.setMinimumWidth(200)
         fileLabel.setText("\n".join(files))  
         form_layout.addWidget(fileLabel)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        form_layout.addWidget(button_box)
+        self.setLayout(form_layout)
+
+##########################################################################
+#=========================== Restore dialog =============================#
+
+class RestoreDialog(QDialog):
+    def __init__(self, max_submits: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Restore")
+        form_layout = QFormLayout()
+        self.combo = QComboBox()
+        self.combo.addItem("latest")
+        for i in range(1, max_submits):
+            self.combo.addItem(f"{i}")
+        form_layout.addWidget(self.combo)
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
@@ -184,8 +201,10 @@ class MVCGui(QWidget):
         self.create_button.clicked.connect(self._create_proj)
         self.submit_button = QPushButton("Submit")
         self.submit_button.clicked.connect(self._submit)
-        self.save_button = QPushButton("Save")
-        self.save_button.clicked.connect(self._save)
+        self.accept_button = QPushButton("Accept")
+        self.accept_button.clicked.connect(self._accept)
+        self.restore_button = QPushButton("Restore")
+        self.restore_button.clicked.connect(self._restore)
         self.load_button = QPushButton("Load")
         self.load_button.clicked.connect(self._load)
         self.review_button = QPushButton("Review")
@@ -252,7 +271,8 @@ class MVCGui(QWidget):
         vbox2.addWidget(QLabel("Project status"))
         vbox2.addWidget(self.infoLabel)
         vbox2.addWidget(self.review_button)
-        vbox2.addWidget(self.save_button)
+        vbox2.addWidget(self.accept_button)
+        vbox2.addWidget(self.restore_button)
         vbox2.addWidget(self.release_button)
         left_col.addLayout(vbox2)
         left_col.addStretch(3)
@@ -413,6 +433,7 @@ class MVCGui(QWidget):
             mvc.create(project_name)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
+        self._updateGUI()
 
     def _submit(self):
         files = self._get_selected_files()
@@ -428,11 +449,11 @@ class MVCGui(QWidget):
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
-    def _save(self):
+    def _accept(self):
         description = self.desc_edit.text()
         try:
             mvc = self._get_mvc()
-            mvc.save(description)
+            mvc.accept(description)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
@@ -447,14 +468,11 @@ class MVCGui(QWidget):
         try:
             mvc = self._get_mvc()
             recipe = mvc.load(project)
-            if len(recipe.files_to_add) > 0:
-                print("adding files", ", ".join(recipe.files_to_add))
-            if len(recipe.files_to_remove) > 0:
-                print("removing files", ", ".join(recipe.files_to_remove))
-            mvc.load_finalize(recipe)
-            self._set_gui_project(project)
+            if self._prompt_confirmation(recipe):
+                mvc.load_finalize(recipe)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
+        self._updateGUI()
             
     def _review(self):
         try:
@@ -462,6 +480,20 @@ class MVCGui(QWidget):
             recipe = mvc.review()
             if self._prompt_confirmation(recipe):
                 mvc.review_finalize(recipe)
+        except MVCError as e:
+            self.errLabel.setText(f"{e}")
+
+    def _restore(self):
+        try:
+            mvc = self._get_mvc()
+            workspace = mvc._get_workspace()
+            project, _= mvc._get_project(workspace.project)
+            dlg = RestoreDialog(project.id.dev)
+            if dlg.exec() == QDialog.Accepted:
+                i = dlg.combo.currentIndex()
+                recipe = mvc.restore(i)
+                if self._prompt_confirmation(recipe):
+                    mvc.review_finalize(recipe)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
@@ -521,9 +553,10 @@ class MVCGui(QWidget):
         for file in recipe.files_to_add:
             if file in user_files:
                 overwritten_files.append(file)
-        dlg = ConfirmationDialog(overwritten_files, self)
-        if dlg.exec() == QDialog.Accepted: return True
-        return False  
+        if overwritten_files:
+            dlg = ConfirmationDialog(overwritten_files, self)
+            if dlg.exec() == QDialog.Rejected: return False
+        return True  
 
     def register_file_handler(self, extension: str, handler: callable):
         self._file_extension_callbacks[extension] = handler
