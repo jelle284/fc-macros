@@ -68,6 +68,22 @@ class ConfirmationDialog(QDialog):
         self.setLayout(form_layout)
 
 ##########################################################################
+#======================== Unclaim dialog ===========================#
+
+class UnclaimDialog(QDialog):
+    def __init__(self, files: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Confirm action")
+        form_layout = QFormLayout()
+        form_layout.addWidget(QLabel("One or more files are claimed by another user.")) 
+        form_layout.addWidget(QLabel("Force unclaim?")) 
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        form_layout.addWidget(button_box)
+        self.setLayout(form_layout)
+
+##########################################################################
 #=========================== Restore dialog =============================#
 
 class RestoreDialog(QDialog):
@@ -107,6 +123,9 @@ class CheckableFileSystemModel(QFileSystemModel):
         self.checked_files = set()
         self.changed_files = set()
         self.claimed_files = set()
+        self.file_colors = {'red': [],
+                            'orange': [],
+                            'green': []}
 
     def data(self, index, role=Qt.DisplayRole):
         if role == Qt.CheckStateRole and index.column() == 0:
@@ -121,6 +140,9 @@ class CheckableFileSystemModel(QFileSystemModel):
                     return QColor("red")
                 if filename in self.changed_files:
                     return QColor("orange")
+                for color in self.file_colors:
+                    if filename in self.file_colors[color]:
+                        return QColor(color)
         return super().data(index, role)
     
     def setData(self, index, value, role=Qt.CheckStateRole):
@@ -142,7 +164,7 @@ class CheckableFileSystemModel(QFileSystemModel):
         self.changed_files = set(changed_files)
         self.claimed_files = set(claimed_files)
         self.layoutChanged.emit()
-
+    
     def index(self, *args):
         index = super().index(*args)
         if index.isValid() and self._check_file_type(index):
@@ -350,7 +372,8 @@ class MVCGui(QWidget):
     def _on_timer_tick(self):
         infoText = ""
         changed_files = []
-        claimed_files = []
+        claimed_by_others = []
+        claimed_by_user = []
         try:
             mvc = self._get_mvc()
             status = mvc.status()
@@ -360,12 +383,16 @@ class MVCGui(QWidget):
                 infoText = "\n".join(status)
             changed_files = mvc.changes()
             claims = mvc.get_claims()
-            claimed_files = [file for file in claims]
+            for file in claims:
+                if self.user_config.user_name == claims[file]:
+                    claimed_by_user.append(file)
+                else:
+                    claimed_by_others.append(file)
             selected = self.tree.selectedIndexes()
             file_was_claimed = False
             if selected:
                 selected_filename = self.model.fileName(selected[0])
-                if selected_filename in claimed_files:
+                if selected_filename in claimed_by_others:
                     self.file_label.setText(f"Claimed by {claims[selected_filename]}")
                     file_was_claimed = True
             if not file_was_claimed:
@@ -373,7 +400,10 @@ class MVCGui(QWidget):
         except MVCError:
             pass
         self.infoLabel.setText(infoText)
-        self.model.set_files_status(changed_files, claimed_files)
+        #self.model.set_files_status(changed_files, claimed_files)
+        self.model.file_colors['orange'] = changed_files
+        self.model.file_colors['red'] = claimed_by_others
+        self.model.file_colors['green'] = claimed_by_user
 
     def _workspace_combo_change(self, index):
         path = self.workspace_combo.itemText(index)
@@ -522,7 +552,12 @@ class MVCGui(QWidget):
             return
         try:
             mvc = self._get_mvc()
-            mvc.unclaim(files)
+            try:
+                mvc.unclaim(files)
+            except MVCError:
+                dlg = UnclaimDialog(files, self)
+                if dlg.exec() == QDialog.Accepted:
+                    mvc.unclaim(files, force=True)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 

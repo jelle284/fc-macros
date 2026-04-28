@@ -14,6 +14,7 @@ Initializes a new document with a Part Container and a Part design body followin
 ### MVC Gui
 Provides a widget for interacting with "Mini Version Control".
 
+Depends on the mvc package being present in the FreeCAD python environment.
 Clone the mvc package into the FreeCAD user mod directory:
 
     git clone https://github.com/jelle284/mvc.git
