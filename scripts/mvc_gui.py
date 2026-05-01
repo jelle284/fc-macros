@@ -1,5 +1,5 @@
 from mvc.core import MiniVC, MVCError
-from mvc.helpers import JSONBase, FileOperation
+from mvc.helpers import JSONBase, FileOperation, FileID
 import os
 from dataclasses import dataclass
 
@@ -87,14 +87,13 @@ class UnclaimDialog(QDialog):
 #=========================== Restore dialog =============================#
 
 class RestoreDialog(QDialog):
-    def __init__(self, max_submits: int, parent=None):
+    def __init__(self, avaiable: list[FileID], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Restore")
         form_layout = QFormLayout()
         self.combo = QComboBox()
-        self.combo.addItem("latest")
-        for i in range(1, max_submits):
-            self.combo.addItem(f"{i}")
+        for fid in avaiable:
+            self.combo.addItem(f"{fid}")
         form_layout.addWidget(self.combo)
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
@@ -516,12 +515,11 @@ class MVCGui(QWidget):
     def _restore(self):
         try:
             mvc = self._get_mvc()
-            workspace = mvc._get_workspace()
-            project, _= mvc._get_project(workspace.project)
-            dlg = RestoreDialog(project.id.dev)
+            available = mvc.restore_available()
+            dlg = RestoreDialog(available)
             if dlg.exec() == QDialog.Accepted:
                 i = dlg.combo.currentIndex()
-                recipe = mvc.restore(i)
+                recipe = mvc.restore(available[i])
                 if self._prompt_confirmation(recipe):
                     mvc.review_finalize(recipe)
         except MVCError as e:
@@ -582,12 +580,7 @@ class MVCGui(QWidget):
                         self._file_extension_callbacks[k](filepath)
 
     def _prompt_confirmation(self, recipe: FileOperation):
-        current_path = self.user_config.user_paths[0]
-        user_files = os.listdir(current_path)
-        overwritten_files = []
-        for file in recipe.files_to_add:
-            if file in user_files:
-                overwritten_files.append(file)
+        overwritten_files = recipe.check_dir(self.user_config.user_paths[0])
         if overwritten_files:
             dlg = ConfirmationDialog(overwritten_files, self)
             if dlg.exec() == QDialog.Rejected: return False
