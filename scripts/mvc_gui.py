@@ -3,13 +3,13 @@ from mvc.helpers import JSONBase, FileOperation, FileID
 import os
 from dataclasses import dataclass
 
-from PySide.QtWidgets import (QFileSystemModel, QTreeView,
+from PySide.QtWidgets import (QListWidget, QListWidgetItem,
                               QVBoxLayout, QHBoxLayout, QFormLayout,
-                              QLineEdit, QLabel, QPushButton,
+                              QLineEdit, QLabel, QTextEdit, QPushButton,
                               QFileDialog, QWidget,
                               QComboBox, QInputDialog,
                               QDialog, QDialogButtonBox)
-from PySide.QtCore import Qt, QTimer, QDir, QModelIndex
+from PySide.QtCore import Qt, QTimer, QDir
 from PySide.QtGui import QColor
 
 
@@ -86,10 +86,10 @@ class UnclaimDialog(QDialog):
 ##########################################################################
 #=========================== Restore dialog =============================#
 
-class RestoreDialog(QDialog):
+class CollectDialog(QDialog):
     def __init__(self, avaiable: list[FileID], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Restore")
+        self.setWindowTitle("Collect")
         form_layout = QFormLayout()
         self.combo = QComboBox()
         for fid in avaiable:
@@ -104,75 +104,67 @@ class RestoreDialog(QDialog):
 ##########################################################################
 #===================== Workspace file browser ===========================#
 
-class CheckableFileSystemModel(QFileSystemModel):
-    def _check_file_type(self, index):
-        filepath = self.fileName(index)
-        exclude_by_filename = filepath in (
+class CheckableFileList(QListWidget):
+    def _check_file_type(self, filename):
+        exclude_by_filename = filename in (
             ".mvc",
             "changelog.md",
         )
-        exclude_by_extension = any(filepath.endswith(extension) for extension in (
+        exclude_by_extension = any(filename.endswith(extension) for extension in (
             ".FCBak",
         ))
-        file_is_forbidden = exclude_by_filename or exclude_by_extension
-        return file_is_forbidden
-    
+        return exclude_by_filename or exclude_by_extension
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.checked_files = set()
-        self.changed_files = set()
-        self.claimed_files = set()
         self.file_colors = {'red': [],
                             'orange': [],
                             'green': []}
+        self.current_path = ""
 
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.CheckStateRole and index.column() == 0:
-            if index in self.checked_files:
-                return Qt.Checked
-            else:
-                return Qt.Unchecked
-        if role == Qt.ForegroundRole and index.column() == 0:
-            if not self.isDir(index):
-                filename = os.path.basename(self.filePath(index))
-                if filename in self.claimed_files:
-                    return QColor("red")
-                if filename in self.changed_files:
-                    return QColor("orange")
-                for color in self.file_colors:
-                    if filename in self.file_colors[color]:
-                        return QColor(color)
-        return super().data(index, role)
-    
-    def setData(self, index, value, role=Qt.CheckStateRole):
-        if role == Qt.CheckStateRole and index.column() == 0:
-            if value == Qt.Checked.value:
-                self.checked_files.add(index)
-            else:
-                self.checked_files.discard(index)
-            self.dataChanged.emit(index, index, [Qt.CheckStateRole])
-            return True
-        return super().setData(index, value, role)
-    
-    def flags(self, index):
-        if self.isDir(index):
-            return super().flags(index) & (~Qt.ItemIsUserCheckable)
-        return super().flags(index) | Qt.ItemIsUserCheckable
+    def load_directory(self, path):
+        self.current_path = path
+        self.update_directory()
 
-    def set_files_status(self, changed_files, claimed_files):
-        self.changed_files = set(changed_files)
-        self.claimed_files = set(claimed_files)
-        self.layoutChanged.emit()
+    def update_directory(self):
+        user_files = [filename for filename in os.listdir(self.current_path)
+                         if not self._check_file_type(filename)]
+        list_files = [self.item(row).text() for row in range(self.count())]
+        for row in range(self.count()):
+            item = self.item(row)
+            if item.text() not in user_files:
+                self.takeItem(row)
+        for filename in user_files:
+            if filename not in list_files:
+                item = QListWidgetItem(filename)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setCheckState(Qt.Unchecked)
+                self.addItem(item)
+
+    def update_colors(self):
+        for row in range(self.count()):
+            item = self.item(row)
+            filename = item.text()
+            color = None
+            for color_name in self.file_colors:
+                if filename in self.file_colors[color_name]:
+                    color = QColor(color_name)
+                    break
+            item.setForeground(color if color else QColor("black"))
+
+    def set_all_checked(self, checked):
+        state = Qt.Checked if checked else Qt.Unchecked
+        for row in range(self.count()):
+            self.item(row).setCheckState(state)
+
+    def get_checked_files(self):
+        return [self.item(row).text() for row in range(self.count())
+                if self.item(row).checkState() == Qt.Checked]
     
-    def index(self, *args):
-        index = super().index(*args)
-        if index.isValid() and self._check_file_type(index):
-            return QModelIndex()
-        return index
-    
-    def open_directory(self, index):
-        if self.isDir(index):
-            return self.filePath(index)
+    def get_selection(self):
+        selected = self.selectedItems()
+        if selected:
+            return selected[0].text()
         return None
 
 ##########################################################################
@@ -219,21 +211,19 @@ class MVCGui(QWidget):
         self.settings_button = QPushButton("Settings")
         self.settings_button.clicked.connect(self._settings)
         self.create_button = QPushButton("Create Project")
-        self.create_button.clicked.connect(self._create_proj)
-        self.submit_button = QPushButton("Submit")
-        self.submit_button.clicked.connect(self._submit)
-        self.accept_button = QPushButton("Accept")
-        self.accept_button.clicked.connect(self._accept)
-        self.restore_button = QPushButton("Restore")
-        self.restore_button.clicked.connect(self._restore)
+        self.create_button.clicked.connect(self._create)
         self.load_button = QPushButton("Load")
         self.load_button.clicked.connect(self._load)
-        self.review_button = QPushButton("Review")
-        self.review_button.clicked.connect(self._review)
-        self.release_button = QPushButton("Release")
-        self.release_button.clicked.connect(self._release)
+        self.collect_button = QPushButton("Collect")
+        self.collect_button.clicked.connect(self._collect)
+        self.submit_button = QPushButton("Submit")
+        self.submit_button.clicked.connect(self._submit)
         self.remove_button = QPushButton("Remove")
         self.remove_button.clicked.connect(self._remove)
+        self.accept_button = QPushButton("Accept")
+        self.accept_button.clicked.connect(self._accept)
+        self.release_button = QPushButton("Release")
+        self.release_button.clicked.connect(self._release)
         self.claim_button = QPushButton("Claim")
         self.claim_button.clicked.connect(self._claim)
         self.unclaim_button = QPushButton("Unclaim")
@@ -246,17 +236,10 @@ class MVCGui(QWidget):
         self.select_all_button.clicked.connect(self._select_all)
         self.deselect_all_button = QPushButton("Deselect All")
         self.deselect_all_button.clicked.connect(self._deselect_all)
-        self.model = CheckableFileSystemModel()
-        self.model.setRootPath(QDir.rootPath())
+        self.file_list = CheckableFileList()
         self.open_button = QPushButton("Open")
         self.open_button.clicked.connect(self._open_tree)
-        self.tree = QTreeView()
-        self.tree.setModel(self.model)
-        self.tree.setRootIndex(self.model.index(QDir.homePath()))
-        self.tree.setColumnHidden(1, True)  # Hide the 'Size' column
-        self.tree.setColumnHidden(2, True)  # Hide the 'Type' column
-        self.tree.setColumnHidden(3, True)  # Hide the 'Date Modified' column
-        self.tree.setMinimumWidth(200)
+        self.file_list.setMinimumWidth(200)
 
         # Text inputs
         self.desc_edit = QLineEdit()
@@ -267,7 +250,7 @@ class MVCGui(QWidget):
         self.infoLabel = QLabel()
         self.infoLabel.setStyleSheet("border: 1px solid black;")
         self.infoLabel.setWordWrap(True)
-        self.infoLabel.setMinimumHeight(LINE_WIDTH * 8)
+        self.infoLabel.setMinimumHeight(LINE_WIDTH * 10)
         self.infoLabel.setMinimumWidth(200)
         self.projectLabel = QLabel()
         self.errLabel = QLabel()
@@ -291,9 +274,7 @@ class MVCGui(QWidget):
         vbox2 = QVBoxLayout()
         vbox2.addWidget(QLabel("Project status"))
         vbox2.addWidget(self.infoLabel)
-        vbox2.addWidget(self.review_button)
         vbox2.addWidget(self.accept_button)
-        vbox2.addWidget(self.restore_button)
         vbox2.addWidget(self.release_button)
         left_col.addLayout(vbox2)
         left_col.addStretch(3)
@@ -303,11 +284,12 @@ class MVCGui(QWidget):
         right_col.addWidget(browse_button)
         right_col.addWidget(self.projectLabel)
         right_col.addWidget(self.workspace_combo)
+        right_col.addWidget(self.collect_button)
         button_layout1 = QHBoxLayout()
         button_layout1.addWidget(self.select_all_button)
         button_layout1.addWidget(self.deselect_all_button)
         right_col.addLayout(button_layout1)
-        right_col.addWidget(self.tree)
+        right_col.addWidget(self.file_list)
         right_col.addWidget(self.file_label)
         button_layout2 = QHBoxLayout()
         button_layout2.addWidget(self.claim_button)
@@ -334,7 +316,7 @@ class MVCGui(QWidget):
     
     def _updateGUI(self):
         current_path = self.user_config.user_paths[0]
-        self.tree.setRootIndex(self.model.index(current_path))
+        self.file_list.load_directory(current_path)
         self.workspace_combo.clear()
         for path in self.user_config.user_paths:
             self.workspace_combo.addItem(path)
@@ -371,38 +353,40 @@ class MVCGui(QWidget):
     def _on_timer_tick(self):
         infoText = ""
         changed_files = []
+        new_files = []
         claimed_by_others = []
         claimed_by_user = []
         try:
             mvc = self._get_mvc()
             status = mvc.status()
             if status:
-                if len(status) > 10:
-                    status = status[:10]
                 infoText = "\n".join(status)
-            changed_files = mvc.changes()
+            new_files, changed_files = mvc.changes()
+            print(new_files, changed_files)
             claims = mvc.get_claims()
             for file in claims:
                 if self.user_config.user_name == claims[file]:
                     claimed_by_user.append(file)
                 else:
                     claimed_by_others.append(file)
-            selected = self.tree.selectedIndexes()
+            selected = self.file_list.get_selection()
             file_was_claimed = False
             if selected:
-                selected_filename = self.model.fileName(selected[0])
-                if selected_filename in claimed_by_others:
-                    self.file_label.setText(f"Claimed by {claims[selected_filename]}")
+                if selected in claimed_by_others:
+                    self.file_label.setText(f"Claimed by {claims[selected]}")
                     file_was_claimed = True
             if not file_was_claimed:
                 self.file_label.setText("")
         except MVCError:
             pass
         self.infoLabel.setText(infoText)
-        #self.model.set_files_status(changed_files, claimed_files)
-        self.model.file_colors['orange'] = changed_files
-        self.model.file_colors['red'] = claimed_by_others
-        self.model.file_colors['green'] = claimed_by_user
+        self.file_list.file_colors['orange'] = changed_files
+        self.file_list.file_colors['blue'] = new_files
+        self.file_list.file_colors['red'] = claimed_by_others
+        self.file_list.file_colors['green'] = claimed_by_user
+        self.file_list.update_directory()
+        self.file_list.update_colors()
+        
 
     def _workspace_combo_change(self, index):
         path = self.workspace_combo.itemText(index)
@@ -423,38 +407,12 @@ class MVCGui(QWidget):
         self._updateGUI()
 
     def _select_all(self):
-        self._set_all_checked(True)
+        self.file_list.set_all_checked(True)
 
     def _deselect_all(self):
-        self._set_all_checked(False)
+        self.file_list.set_all_checked(False)
 
-    def _set_all_checked(self, checked):
-        root_index = self.tree.rootIndex()
-        for row in range(self.model.rowCount(root_index)):
-            child_index = self.model.index(row, 0, root_index)
-            self._set_checked_recursive(child_index, checked)
-
-    def _set_checked_recursive(self, index, checked):
-        if not index.isValid():
-            return
-        flags = self.model.flags(index)
-        if flags & Qt.ItemIsUserCheckable:
-            if checked:
-                self.model.checked_files.add(index)
-            else:
-                self.model.checked_files.discard(index)
-            self.model.dataChanged.emit(index, index, [Qt.CheckStateRole])
-        for row in range(self.model.rowCount(index)):
-            child_index = self.model.index(row, 0, index)
-            self._set_checked_recursive(child_index, checked)
-
-    def _get_selected_files(self):
-        selected_files = []
-        for index in self.model.checked_files:
-            selected_files.append(self.model.fileName(index))
-        return selected_files
-
-    def _create_proj(self):
+    def _create(self):
         project_name, ok = QInputDialog.getText(self, "Create Project", "Enter project name")
         if not ok: return
         try:
@@ -464,8 +422,36 @@ class MVCGui(QWidget):
             self.errLabel.setText(f"{e}")
         self._updateGUI()
 
+    def _load(self):
+        mvc = self._get_mvc()
+        dlg = LoadOrCreateDialog(mvc, self)
+        status = dlg.exec()
+        if not status: return
+        project = dlg.projects_combo.currentText()
+        if not project: return
+        try:
+            mvc = self._get_mvc()
+            mvc.load(project)
+        except MVCError as e:
+            self.errLabel.setText(f"{e}")
+        self._updateGUI()
+
+    def _collect(self):
+        try:
+            mvc = self._get_mvc()
+            available = mvc.available()
+            dlg = CollectDialog(available)
+            if dlg.exec() == QDialog.Accepted:
+                i = dlg.combo.currentIndex()
+                file_id = available[i]
+                new_files, overwritten_files = mvc.changes(file_id)
+                if self._prompt_confirmation(overwritten_files):
+                    mvc.collect(file_id)
+        except MVCError as e:
+            self.errLabel.setText(f"{e}")
+            
     def _submit(self):
-        files = self._get_selected_files()
+        files = self.file_list.get_checked_files()
         if files == []:
             self.errLabel.setText("No files to submit.")
             return
@@ -478,50 +464,22 @@ class MVCGui(QWidget):
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
+    def _remove(self):
+        files = self.file_list.get_checked_files()
+        if files == []:
+            self.errLabel.setText("No files selected.")
+            return
+        try:
+            mvc = self._get_mvc()
+            mvc.remove(files)
+        except MVCError as e:
+            self.errLabel.setText(f"{e}")
+
     def _accept(self):
         description = self.desc_edit.text()
         try:
             mvc = self._get_mvc()
             mvc.accept(description)
-        except MVCError as e:
-            self.errLabel.setText(f"{e}")
-
-    def _load(self):
-        mvc = self._get_mvc()
-        dlg = LoadOrCreateDialog(mvc, self)
-        status = dlg.exec()
-        if not status: return
-        project = dlg.projects_combo.currentText()
-        if not project: return
-        print("loading", project)
-        try:
-            mvc = self._get_mvc()
-            recipe = mvc.load(project)
-            if self._prompt_confirmation(recipe):
-                mvc.load_finalize(recipe)
-        except MVCError as e:
-            self.errLabel.setText(f"{e}")
-        self._updateGUI()
-            
-    def _review(self):
-        try:
-            mvc = self._get_mvc()
-            recipe = mvc.review()
-            if self._prompt_confirmation(recipe):
-                mvc.review_finalize(recipe)
-        except MVCError as e:
-            self.errLabel.setText(f"{e}")
-
-    def _restore(self):
-        try:
-            mvc = self._get_mvc()
-            available = mvc.restore_available()
-            dlg = RestoreDialog(available)
-            if dlg.exec() == QDialog.Accepted:
-                i = dlg.combo.currentIndex()
-                recipe = mvc.restore(available[i])
-                if self._prompt_confirmation(recipe):
-                    mvc.review_finalize(recipe)
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
@@ -533,7 +491,7 @@ class MVCGui(QWidget):
             self.errLabel.setText(f"{e}")
 
     def _claim(self):
-        files = self._get_selected_files()
+        files = self.file_list.get_checked_files()
         if files == []:
             self.errLabel.setText("No files selected.")
             return
@@ -544,7 +502,7 @@ class MVCGui(QWidget):
             self.errLabel.setText(f"{e}")
 
     def _unclaim(self):
-        files = self._get_selected_files()
+        files = self.file_list.get_checked_files()
         if files == []:
             self.errLabel.setText("No files selected.")
             return
@@ -559,28 +517,16 @@ class MVCGui(QWidget):
         except MVCError as e:
             self.errLabel.setText(f"{e}")
 
-    def _remove(self):
-        files = self._get_selected_files()
-        if files == []:
-            self.errLabel.setText("No files selected.")
-            return
-        try:
-            mvc = self._get_mvc()
-            mvc.remove(files)
-        except MVCError as e:
-            self.errLabel.setText(f"{e}")
-
     def _open_tree(self):
-        selected = self._get_selected_files()
-        for file in selected:
+        checked_files = self.file_list.get_checked_files()
+        for file in checked_files:
             filepath: str = os.path.join(self.user_config.user_paths[0], file)
             if os.path.isfile(filepath):
                 for k in self._file_extension_callbacks:
                     if file.endswith(f".{k}"):
                         self._file_extension_callbacks[k](filepath)
 
-    def _prompt_confirmation(self, recipe: FileOperation):
-        overwritten_files = recipe.check_dir(self.user_config.user_paths[0])
+    def _prompt_confirmation(self, overwritten_files):
         if overwritten_files:
             dlg = ConfirmationDialog(overwritten_files, self)
             if dlg.exec() == QDialog.Rejected: return False
