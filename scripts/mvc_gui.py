@@ -1,11 +1,11 @@
 from mvc.core import MiniVC, MVCError
-from mvc.helpers import JSONBase, FileOperation, FileID
+from mvc.helpers import JSONBase, FileID
 import os
 from dataclasses import dataclass
 
 from PySide.QtWidgets import (QListWidget, QListWidgetItem,
                               QVBoxLayout, QHBoxLayout, QFormLayout,
-                              QLineEdit, QLabel, QTextEdit, QPushButton,
+                              QLineEdit, QLabel, QPushButton,
                               QFileDialog, QWidget,
                               QComboBox, QInputDialog,
                               QDialog, QDialogButtonBox)
@@ -105,16 +105,28 @@ class CollectDialog(QDialog):
 #===================== Workspace file browser ===========================#
 
 class CheckableFileList(QListWidget):
-    def _check_file_type(self, filename):
-        exclude_by_filename = filename in (
-            ".mvc",
-            "changelog.md",
-        )
-        exclude_by_extension = any(filename.endswith(extension) for extension in (
-            ".FCBak",
-        ))
-        return exclude_by_filename or exclude_by_extension
+    def _scan(self):
+        files = []
+        for filename in os.listdir(self.current_path):
+            exclude_by_filename = filename in (
+                ".mvc",
+                "changelog.md",
+            )
+            exclude_by_extension = any(filename.endswith(extension) for extension in (
+                ".FCBak",
+            ))
+            is_dir = os.path.isdir(os.path.join(self.current_path, filename))
+            excluded = exclude_by_filename or exclude_by_extension or is_dir
+            if not excluded:
+                files.append(filename)
+        return files
 
+    def _create_item(self, filename):
+        item = QListWidgetItem(filename)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setCheckState(Qt.Unchecked)
+        return item
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.file_colors = {'red': [],
@@ -123,12 +135,14 @@ class CheckableFileList(QListWidget):
         self.current_path = ""
 
     def load_directory(self, path):
+        self.clear()
         self.current_path = path
-        self.update_directory()
+        for file in self._scan():
+            item = self._create_item(file)
+            self.addItem(item)
 
     def update_directory(self):
-        user_files = [filename for filename in os.listdir(self.current_path)
-                         if not self._check_file_type(filename)]
+        user_files = self._scan()
         list_files = [self.item(row).text() for row in range(self.count())]
         for row in range(self.count()):
             item = self.item(row)
@@ -136,10 +150,9 @@ class CheckableFileList(QListWidget):
                 self.takeItem(row)
         for filename in user_files:
             if filename not in list_files:
-                item = QListWidgetItem(filename)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                item.setCheckState(Qt.Unchecked)
+                item = self._create_item(filename)
                 self.addItem(item)
+
 
     def update_colors(self):
         for row in range(self.count()):
@@ -252,7 +265,6 @@ class MVCGui(QWidget):
         self.infoLabel.setWordWrap(True)
         self.infoLabel.setMinimumHeight(LINE_WIDTH * 10)
         self.infoLabel.setMinimumWidth(200)
-        self.projectLabel = QLabel()
         self.errLabel = QLabel()
         self.file_label = QLabel()
 
@@ -282,7 +294,6 @@ class MVCGui(QWidget):
         # File column layout
         right_col = QVBoxLayout()
         right_col.addWidget(browse_button)
-        right_col.addWidget(self.projectLabel)
         right_col.addWidget(self.workspace_combo)
         right_col.addWidget(self.collect_button)
         button_layout1 = QHBoxLayout()
@@ -323,20 +334,15 @@ class MVCGui(QWidget):
         self.workspace_combo.setCurrentIndex(0)
         allow_create = True
         allow_load = True
-        workspace = None
         try:
             mvc = self._get_mvc()
             workspace = mvc._get_workspace()
             allow_load = False
-            project, _= mvc._get_project(workspace.project)
+            mvc._get_project(workspace.project)
             allow_create = False
-            self.projectLabel.setText(f"{project.name} {project.id}")
             self.errLabel.setText("")
         except MVCError as err:
             self.errLabel.setText(f"{err}")
-            self.projectLabel.setText("")
-            if workspace:
-                self.projectLabel.setText(workspace.project)
         self.create_button.setEnabled(allow_create)
         self.load_button.setEnabled(allow_load)
 
@@ -360,9 +366,9 @@ class MVCGui(QWidget):
             mvc = self._get_mvc()
             status = mvc.status()
             if status:
+                if len(status) > 10: status = status[:10]
                 infoText = "\n".join(status)
             new_files, changed_files = mvc.changes()
-            print(new_files, changed_files)
             claims = mvc.get_claims()
             for file in claims:
                 if self.user_config.user_name == claims[file]:
@@ -403,8 +409,9 @@ class MVCGui(QWidget):
 
     def _browse(self):
         path = QFileDialog.getExistingDirectory(self, "Select Directory", self.user_config.user_paths[0])
-        self._set_user_path(path)
-        self._updateGUI()
+        if os.path.isdir(path):
+            self._set_user_path(path)
+            self._updateGUI()
 
     def _select_all(self):
         self.file_list.set_all_checked(True)
