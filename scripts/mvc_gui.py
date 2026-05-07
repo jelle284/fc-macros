@@ -18,7 +18,7 @@ from PySide.QtGui import QColor
 #================= User settings, persistent storage ====================#
 @dataclass
 class UserConfig(JSONBase):
-    backend_path: str
+    base_path: str
     user_name: str
     user_paths: list[str]
     
@@ -26,15 +26,15 @@ class SettingsDialog(QDialog):
     def __init__(self, default: UserConfig, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.backend_edit = QLineEdit(default.backend_path)
+        self.base_edit = QLineEdit(default.base_path)
         self.user_edit = QLineEdit(default.user_name)
         self.browse_button = QPushButton("Browse")
-        self.browse_button.clicked.connect(self._browse_backend)
+        self.browse_button.clicked.connect(self._browse_base)
         form_layout = QFormLayout()
-        backend_layout = QHBoxLayout()
-        backend_layout.addWidget(self.backend_edit)
-        backend_layout.addWidget(self.browse_button)
-        form_layout.addRow("Backend Path:", backend_layout)
+        base_layout = QHBoxLayout()
+        base_layout.addWidget(self.base_edit)
+        base_layout.addWidget(self.browse_button)
+        form_layout.addRow("Base Path:", base_layout)
         form_layout.addRow("User Name:", self.user_edit)
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
@@ -42,10 +42,10 @@ class SettingsDialog(QDialog):
         form_layout.addWidget(button_box)
         self.setLayout(form_layout)
 
-    def _browse_backend(self):
-        path = QFileDialog.getExistingDirectory(self, "Select Backend Directory")
+    def _browse_base(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Base Path")
         if path:
-            self.backend_edit.setText(path)
+            self.base_edit.setText(path)
 
 ##########################################################################
 #======================== Confirmation dialog ===========================#
@@ -209,7 +209,7 @@ class MVCGui(QWidget):
             self.user_config = UserConfig.load(self.appdata_path)
         except Exception as e:
             self.user_config = UserConfig(
-                backend_path = f"{QDir.rootPath()}mvc-files",
+                base_path = f"{QDir.rootPath()}mvc-files",
                 user_name = "user",
                 user_paths = [QDir.rootPath(),]
             )
@@ -323,7 +323,7 @@ class MVCGui(QWidget):
         self.timer.start(1000)
 
     def _get_mvc(self):
-        return MiniVC(self.user_config.backend_path, self.user_config.user_paths[0], self.user_config.user_name)
+        return MiniVC(self.user_config.base_path, self.user_config.user_paths[0], self.user_config.user_name)
     
     def _updateGUI(self):
         current_path = self.user_config.user_paths[0]
@@ -402,7 +402,7 @@ class MVCGui(QWidget):
     def _settings(self):
         dlg = SettingsDialog(self.user_config, self)
         if dlg.exec() == QDialog.Accepted:
-            self.user_config.backend_path = dlg.backend_edit.text()
+            self.user_config.base_path = dlg.base_edit.text()
             self.user_config.user_name = dlg.user_edit.text()
             self.user_config.save(self.appdata_path)
             self._updateGUI()
